@@ -55,31 +55,65 @@ export async function purgeCacheByTags(tags: string[]) {
 	}
 }
 
-export async function internalPurgeCacheByTags(env: CloudflareEnv, tags: string[]) {
-	if (!env.CACHE_PURGE_ZONE_ID || !env.CACHE_PURGE_API_TOKEN) {
+export type PurgeCacheResult =
+	| "missing-credentials"
+	| "rate-limit-exceeded"
+	| "purge-failed"
+	| "purge-success";
+
+export async function internalPurgeCacheByTags(
+	env: CloudflareEnv,
+	tags: string[]
+): Promise<PurgeCacheResult> {
+	const zoneIds = new Set<string>();
+
+	if (env.CACHE_PURGE_ZONE_ID) {
+		zoneIds.add(env.CACHE_PURGE_ZONE_ID);
+	}
+
+	if (env.CACHE_PURGE_ZONE_IDS) {
+		for (const raw of env.CACHE_PURGE_ZONE_IDS.split(",")) {
+			const id = raw.trim();
+			if (id) zoneIds.add(id);
+		}
+	}
+
+	if (zoneIds.size === 0 || !env.CACHE_PURGE_API_TOKEN) {
 		// THIS IS A NO-OP
-		error("No cache zone ID or API token provided. Skipping cache purge.");
+		error("No cache zone ID(s) or API token provided. Skipping cache purge.");
 		return "missing-credentials";
 	}
 
+	const results = await Promise.all(zoneIds.values().map((zoneId) => purgeZone(env, zoneId, tags)));
+
+	// If any zone hit the rate limit, report that so the caller can retry.
+	if (results.includes("rate-limit-exceeded")) {
+		return "rate-limit-exceeded";
+	}
+
+	if (results.includes("purge-failed")) {
+		return "purge-failed";
+	}
+
+	return "purge-success";
+}
+
+async function purgeZone(env: CloudflareEnv, zoneId: string, tags: string[]): Promise<PurgeCacheResult> {
 	let response: Response | undefined;
 	try {
-		response = await fetch(
-			`https://api.cloudflare.com/client/v4/zones/${env.CACHE_PURGE_ZONE_ID}/purge_cache`,
-			{
-				headers: {
-					Authorization: `Bearer ${env.CACHE_PURGE_API_TOKEN}`,
-					"Content-Type": "application/json",
-				},
-				method: "POST",
-				body: JSON.stringify({
-					tags,
-				}),
-			}
-		);
+		response = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
+			headers: {
+				Authorization: `Bearer ${env.CACHE_PURGE_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			method: "POST",
+			body: JSON.stringify({
+				tags,
+			}),
+		});
 		if (response.status === 429) {
 			// Rate limit exceeded
-			error("purgeCacheByTags: Rate limit exceeded. Skipping cache purge.");
+			error(`purgeCacheByTags: Rate limit exceeded for zone ${zoneId}. Skipping cache purge.`);
 			return "rate-limit-exceeded";
 		}
 		const bodyResponse = (await response.json()) as {
@@ -88,15 +122,15 @@ export async function internalPurgeCacheByTags(env: CloudflareEnv, tags: string[
 		};
 		if (!bodyResponse.success) {
 			error(
-				"purgeCacheByTags: Cache purge failed. Errors:",
+				`purgeCacheByTags: Cache purge failed for zone ${zoneId}. Errors:`,
 				bodyResponse.errors.map((error) => `${error.code}: ${error.message}`)
 			);
 			return "purge-failed";
 		}
-		debugCache("purgeCacheByTags", "Cache purged successfully for tags:", tags);
+		debugCache("purgeCacheByTags", `Cache purged successfully for zone ${zoneId}, tags:`, tags);
 		return "purge-success";
 	} catch (error) {
-		console.error("Error purging cache by tags:", error);
+		console.error(`Error purging cache by tags for zone ${zoneId}:`, error);
 		return "purge-failed";
 	} finally {
 		// Cancel the stream when it has not been consumed

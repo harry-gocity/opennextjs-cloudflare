@@ -68,9 +68,15 @@ declare global {
 		NEXT_CACHE_DO_PURGE?: DurableObjectNamespace<BucketCachePurge>;
 		// The amount of time in seconds that the cache purge will wait before purging the cache (not needed in direct mode)
 		NEXT_CACHE_DO_PURGE_BUFFER_TIME_IN_SECONDS?: string;
-		// The zone ID to use for the cache purge https://developers.cloudflare.com/fundamentals/setup/find-account-and-zone-ids/
+		// The zone ID to use for the cache purge (single zone)
+		// https://developers.cloudflare.com/fundamentals/setup/find-account-and-zone-ids/
 		CACHE_PURGE_ZONE_ID?: string;
+		// Comma-separated list of zone IDs to purge (multi-zone)
+		// Use this when a single worker serves multiple domains (zones).
+		// May be combined with CACHE_PURGE_ZONE_ID; duplicates are ignored.
+		CACHE_PURGE_ZONE_IDS?: string;
 		// The API token to use for the cache purge. It should have the `Cache Purge` permission
+		// When multiple zones are configured, the token must have the permission on every zone.
 		CACHE_PURGE_API_TOKEN?: string;
 
 		// The following variables must be provided when skew protection is enabled
