@@ -55,11 +55,7 @@ export async function purgeCacheByTags(tags: string[]) {
 	}
 }
 
-export type PurgeCacheResult =
-	| "missing-credentials"
-	| "rate-limit-exceeded"
-	| "purge-failed"
-	| "purge-success";
+type PurgeCacheResult = "missing-credentials" | "rate-limit-exceeded" | "purge-failed" | "purge-success";
 
 export async function internalPurgeCacheByTags(
 	env: CloudflareEnv,
@@ -68,13 +64,11 @@ export async function internalPurgeCacheByTags(
 	const zoneIds = new Set<string>();
 
 	if (env.CACHE_PURGE_ZONE_ID) {
-		zoneIds.add(env.CACHE_PURGE_ZONE_ID);
-	}
-
-	if (env.CACHE_PURGE_ZONE_IDS) {
-		for (const raw of env.CACHE_PURGE_ZONE_IDS.split(",")) {
+		for (const raw of env.CACHE_PURGE_ZONE_ID.split(",")) {
 			const id = raw.trim();
-			if (id) zoneIds.add(id);
+			if (id) {
+				zoneIds.add(id);
+			}
 		}
 	}
 
