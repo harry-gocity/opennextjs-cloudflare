@@ -84,7 +84,7 @@ export async function internalPurgeCacheByTags(
 		return "missing-credentials";
 	}
 
-	const results = await Promise.all(zoneIds.values().map((zoneId) => purgeZone(env, zoneId, tags)));
+	const results = await Promise.all([...zoneIds].map((zoneId) => purgeZone(env, zoneId, tags)));
 
 	// If any zone hit the rate limit, report that so the caller can retry.
 	if (results.includes("rate-limit-exceeded")) {
