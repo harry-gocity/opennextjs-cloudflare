@@ -2,7 +2,7 @@ import { error } from "@opennextjs/aws/adapters/logger.js";
 import type { CDNInvalidationHandler } from "@opennextjs/aws/types/overrides.js";
 
 import { getCloudflareContext } from "../../cloudflare-context.js";
-import { debugCache, internalPurgeCacheByTags, parseZoneIds } from "../internal.js";
+import { debugCache, internalPurgeCacheByTags } from "../internal.js";
 
 interface PurgeOptions {
 	type: "durableObject" | "direct";
@@ -16,8 +16,7 @@ export const purgeCache = ({ type = "direct" }: PurgeOptions) => {
 			const tags = paths.map((path) => `_N_T_${path.rawPath}`);
 			debugCache("cdnInvalidation", "Invalidating paths:", tags);
 			if (type === "direct") {
-				const zoneIds = parseZoneIds(env);
-				await internalPurgeCacheByTags(env, tags, zoneIds);
+				await internalPurgeCacheByTags(env, tags);
 			} else {
 				const durableObject = env.NEXT_CACHE_DO_PURGE;
 				if (!durableObject) {

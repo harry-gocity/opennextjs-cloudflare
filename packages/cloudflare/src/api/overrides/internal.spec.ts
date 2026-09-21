@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { internalPurgeCacheByTags, parseZoneIds } from "./internal.js";
+import { internalPurgeCacheByTags } from "./internal.js";
 
 // Mock dependencies
 vi.mock("@opennextjs/aws/adapters/logger.js", () => ({
@@ -19,56 +19,27 @@ const rateLimitBody = () => {
 	return new Response(null, { status: 429 });
 };
 
-describe("parseZoneIds", () => {
-	it("should return an empty array when CACHE_PURGE_ZONE_ID is not set", () => {
-		expect(parseZoneIds({} as CloudflareEnv)).toEqual([]);
-	});
-
-	it("should parse a single zone ID", () => {
-		expect(parseZoneIds({ CACHE_PURGE_ZONE_ID: "zone-a" } as CloudflareEnv)).toEqual(["zone-a"]);
-	});
-
-	it("should parse comma-separated zone IDs and trim whitespace", () => {
-		expect(parseZoneIds({ CACHE_PURGE_ZONE_ID: "zone-a, zone-b, zone-c" } as CloudflareEnv)).toEqual([
-			"zone-a",
-			"zone-b",
-			"zone-c",
-		]);
-	});
-
-	it("should deduplicate zone IDs", () => {
-		expect(parseZoneIds({ CACHE_PURGE_ZONE_ID: "zone-a, zone-b, zone-a" } as CloudflareEnv)).toEqual([
-			"zone-a",
-			"zone-b",
-		]);
-	});
-
-	it("should skip empty entries from trailing commas", () => {
-		expect(parseZoneIds({ CACHE_PURGE_ZONE_ID: "zone-a,,zone-b," } as CloudflareEnv)).toEqual([
-			"zone-a",
-			"zone-b",
-		]);
-	});
-});
-
 describe("internalPurgeCacheByTags", () => {
 	it.each([
-		{ scenario: "empty zone list", zoneIds: [] as string[], env: { CACHE_PURGE_API_TOKEN: "token" } },
-		{ scenario: "no API token", zoneIds: ["zone-a"], env: {} },
-	])("should return missing-credentials when $scenario", async ({ zoneIds, env }) => {
-		const result = await internalPurgeCacheByTags(env as CloudflareEnv, ["tag1"], zoneIds);
-
-		expect(result).toEqual({ status: "missing-credentials", rateLimitedZones: [] });
+		{ scenario: "no env vars set", env: {} },
+		{ scenario: "only CACHE_PURGE_ZONE_ID set", env: { CACHE_PURGE_ZONE_ID: "zone-a" } },
+		{ scenario: "only CACHE_PURGE_API_TOKEN set", env: { CACHE_PURGE_API_TOKEN: "token" } },
+	])("should return missing-credentials when $scenario", async ({ env }) => {
+		const result = await internalPurgeCacheByTags(env as CloudflareEnv, ["tag1"]);
+		expect(result).toBe("missing-credentials");
 	});
 
-	it("should purge a single zone", async () => {
+	it("should purge a single zone via CACHE_PURGE_ZONE_ID", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(successBody());
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "purge-success", rateLimitedZones: [] });
+		expect(result).toBe("purge-success");
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 		expect(fetchSpy).toHaveBeenCalledWith(
 			"https://api.cloudflare.com/client/v4/zones/zone-a/purge_cache",
@@ -76,14 +47,17 @@ describe("internalPurgeCacheByTags", () => {
 		);
 	});
 
-	it("should purge multiple zones in parallel", async () => {
+	it("should purge multiple zones via comma-separated CACHE_PURGE_ZONE_ID", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(successBody()));
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a, zone-b, zone-c",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a", "zone-b", "zone-c"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "purge-success", rateLimitedZones: [] });
+		expect(result).toBe("purge-success");
 		expect(fetchSpy).toHaveBeenCalledTimes(3);
 		expect(fetchSpy).toHaveBeenCalledWith(
 			"https://api.cloudflare.com/client/v4/zones/zone-a/purge_cache",
@@ -99,17 +73,34 @@ describe("internalPurgeCacheByTags", () => {
 		);
 	});
 
-	it("should return rate-limit-exceeded with the limited zone IDs", async () => {
+	it("should de-duplicate zone IDs in CACHE_PURGE_ZONE_ID", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(successBody()));
+
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a, zone-b, zone-a",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
+
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
+
+		expect(result).toBe("purge-success");
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it("should return rate-limit-exceeded when any zone is rate-limited", async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValueOnce(successBody())
 			.mockResolvedValueOnce(rateLimitBody());
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a, zone-b",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a", "zone-b"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "rate-limit-exceeded", rateLimitedZones: ["zone-b"] });
+		expect(result).toBe("rate-limit-exceeded");
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
@@ -119,20 +110,26 @@ describe("internalPurgeCacheByTags", () => {
 			.mockResolvedValueOnce(successBody())
 			.mockResolvedValueOnce(failBody());
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a, zone-b",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a", "zone-b"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "purge-failed", rateLimitedZones: [] });
+		expect(result).toBe("purge-failed");
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
 	it("should pass the correct tags in the request body", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(successBody());
 
-		const env = { CACHE_PURGE_API_TOKEN: "my-token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a",
+			CACHE_PURGE_API_TOKEN: "my-token",
+		} as CloudflareEnv;
 
-		await internalPurgeCacheByTags(env, ["tag1", "tag2"], ["zone-a"]);
+		await internalPurgeCacheByTags(env, ["tag1", "tag2"]);
 
 		expect(fetchSpy).toHaveBeenCalledWith("https://api.cloudflare.com/client/v4/zones/zone-a/purge_cache", {
 			body: '{"tags":["tag1","tag2"]}',
@@ -144,23 +141,43 @@ describe("internalPurgeCacheByTags", () => {
 		});
 	});
 
+	it("should handle empty entries in CACHE_PURGE_ZONE_ID (trailing comma)", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(successBody()));
+
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a,,zone-b,",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
+
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
+
+		expect(result).toBe("purge-success");
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
 	it("should return purge-failed when fetch throws", async () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network error"));
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "purge-failed", rateLimitedZones: [] });
+		expect(result).toBe("purge-failed");
 	});
 
 	it("should prioritise rate-limit-exceeded over purge-failed", async () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(failBody()).mockResolvedValueOnce(rateLimitBody());
 
-		const env = { CACHE_PURGE_API_TOKEN: "token" } as CloudflareEnv;
+		const env = {
+			CACHE_PURGE_ZONE_ID: "zone-a, zone-b",
+			CACHE_PURGE_API_TOKEN: "token",
+		} as CloudflareEnv;
 
-		const result = await internalPurgeCacheByTags(env, ["tag1"], ["zone-a", "zone-b"]);
+		const result = await internalPurgeCacheByTags(env, ["tag1"]);
 
-		expect(result).toEqual({ status: "rate-limit-exceeded", rateLimitedZones: ["zone-b"] });
+		expect(result).toBe("rate-limit-exceeded");
 	});
 });
