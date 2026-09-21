@@ -17,7 +17,7 @@
 		}
 	],
 	"vars": {
-		"CACHE_PURGE_ZONE_ID": "test-zone-a",
+		"CACHE_PURGE_ZONE_ID": "test-zone-a,test-zone-b",
 		"CACHE_PURGE_API_TOKEN": "test-token"
 	}
 }
